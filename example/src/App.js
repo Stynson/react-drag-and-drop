@@ -39,7 +39,7 @@ const DragItem = ({ children, id, containerId }) => {
   return (
     <div
       onMouseDown={(e) => {
-        dragContext.dragStart(containerId, id, e)
+        dragContext.dragStart(containerId, id, e, children)
         setIsDragging(true)
       }}
       onMouseUp={() => {
@@ -54,11 +54,7 @@ const DragItem = ({ children, id, containerId }) => {
   )
 }
 
-const DragClone = ({ position, children }) => {
-  return <div style={{ position: 'absolute' }}>{children}</div>
-}
-
-const DragContainer = ({ startPosition }) => {
+const DragContainer = ({ startPosition, dragChildren }) => {
   const [position, setPosition] = useState(startPosition)
   useEffect(() => {
     document.addEventListener('mousemove', (e) => {
@@ -75,7 +71,7 @@ const DragContainer = ({ startPosition }) => {
         top: position.y + 'px'
       }}
     >
-      alma
+      {dragChildren}
     </div>
   )
 }
@@ -92,37 +88,48 @@ const DragContext = React.createContext({})
 const DragProvider = ({ children, dragIds, setDragIds }) => {
   const [isDragging, setIsDragging] = useState(false)
   const [dragItems, setDragItems] = useState()
+  const [draggedItemId, setDraggedItemId] = useState()
+  const [dragChildren, setDragChildren] = useState()
   const [startPosition, setStartPosition] = useState({ x: 0, y: 0 })
   const [lastContainer, setLastContainer] = useState(0)
   const previousLastContainer = usePrevious(lastContainer)
   useEffect(() => {
     if (isDragging && dragItems && previousLastContainer != lastContainer) {
       setDragItems((oldItems) => {
-        console.log(
-          `manipulate container currentContainer: ${lastContainer} previousContainer: ${previousLastContainer} items: ${JSON.stringify(
-            dragItems
-          )}`
-        )
         const copyItems = { ...oldItems }
         copyItems[previousLastContainer].pop()
         if (!copyItems[lastContainer]) copyItems[lastContainer] = []
-        copyItems[lastContainer].push({ id: Math.random(), isDragged: true })
+        copyItems[lastContainer].push({ id: draggedItemId, isDragged: true })
         return copyItems
       })
     }
   }, [lastContainer])
-  useEffect(() => {
-    document.addEventListener('mouseup', (e) => {
-      setIsDragging(false)
+
+  const dragEndHandler = useCallback(() => {
+    setIsDragging(false)
+    console.log('MOUSEUP', lastContainer)
+    setDragItems((oldItems) => {
+      let copyItems = { ...oldItems }
+      copyItems[lastContainer] = copyItems[lastContainer].map(({ id }) => ({
+        id,
+        isDragged: false
+      }))
+
+      return copyItems
     })
-  })
+  }, [lastContainer])
+
+  useEffect(() => {
+    document.addEventListener('mouseup', dragEndHandler)
+    return () => document.removeEventListener('mouseup', dragEndHandler)
+  }, [lastContainer])
+
   useEffect(() => {
     const dragItems = {}
     Object.entries(dragIds).forEach(
       ([containerId, itemIds]) =>
         (dragItems[containerId] = itemIds.map((id) => ({ id })))
     )
-    console.log('re evaluate ids-s', dragItems)
     setDragItems(dragItems)
   }, [dragIds])
 
@@ -137,9 +144,11 @@ const DragProvider = ({ children, dragIds, setDragIds }) => {
     setContainerRef: (id, ref) => {},
     mouseOverContainer: mouseOverContainerCallback,
     items: dragItems,
-    dragStart: (containerId, itemId, e) => {
+    dragStart: (containerId, itemId, e, children) => {
       setIsDragging(true)
       setStartPosition({ x: e.clientX, y: e.clientY })
+      setDraggedItemId(itemId)
+      setDragChildren(children)
     },
     dragStop: (containerId, itemId) => {
       setIsDragging(false)
@@ -150,7 +159,10 @@ const DragProvider = ({ children, dragIds, setDragIds }) => {
   return (
     <DragContext.Provider value={dragContext}>
       {isDragging && (
-        <DragContainer startPosition={startPosition}></DragContainer>
+        <DragContainer
+          startPosition={startPosition}
+          dragChildren={dragChildren}
+        ></DragContainer>
       )}
       <div style={{ userSelect: 'none' }}>{children}</div>
     </DragContext.Provider>
@@ -170,6 +182,8 @@ function useDragContainer(id) {
 
   return [dragItems, containerRef]
 }
+
+//----------------- use ---------------------------------
 
 const Column = ({ id }) => {
   const containerId = id
