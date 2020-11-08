@@ -36,10 +36,11 @@ const Item = styled.div`
 const DragItem = ({ children, id, containerId }) => {
   const dragContext = useContext(DragContext)
   const [isDragging, setIsDragging] = useState()
+  const ref = useRef()
   return (
     <div
       onMouseDown={(e) => {
-        dragContext.dragStart(containerId, id, e, children)
+        dragContext.dragStart(containerId, id, e, children, ref)
         setIsDragging(true)
       }}
       onMouseUp={() => {
@@ -49,26 +50,49 @@ const DragItem = ({ children, id, containerId }) => {
       position={null}
       scale={1}
     >
-      <div style={{ position: isDragging ? 'block' : 'block' }}>{children}</div>
+      <div
+        ref={ref}
+        style={{
+          position: isDragging ? 'block' : 'block',
+          pointerEvents: 'none !important'
+        }}
+      >
+        {children}
+      </div>
     </div>
   )
 }
 
-const DragContainer = ({ startPosition, dragChildren }) => {
+const DragContainer = ({
+  startPosition,
+  dragChildren,
+  offset,
+  containerRefs,
+  mouseOverContainer
+}) => {
   const [position, setPosition] = useState(startPosition)
   useEffect(() => {
-    document.addEventListener('mousemove', (e) => {
+    const onMouseMove = (e) => {
       setPosition({ x: e.clientX, y: e.clientY })
-    })
-  }, [])
+      Object.entries(containerRefs).some(([id, ref]) => {
+        const rect = ref.current.getBoundingClientRect()
+        if (rect.left < e.clientX && rect.right > e.clientX) {
+          mouseOverContainer(id)
+          return true
+        }
+      })
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    return () => document.removeEventListener('mousemove', onMouseMove)
+  }, [containerRefs])
   return (
     <div
       style={{
         background: 'red',
         borderRadius: 100,
         position: 'absolute',
-        left: position.x + 'px',
-        top: position.y + 'px'
+        left: position.x - offset.x + 'px',
+        top: position.y - offset.y + 'px'
       }}
     >
       {dragChildren}
@@ -92,6 +116,8 @@ const DragProvider = ({ children, dragIds, setDragIds }) => {
   const [dragChildren, setDragChildren] = useState()
   const [startPosition, setStartPosition] = useState({ x: 0, y: 0 })
   const [lastContainer, setLastContainer] = useState(0)
+  const [mirrorOffset, setMirrorOffset] = useState({ x: 0, y: 0 }) //TODO recalculate offset after scroll...
+  const [containerRefs, setContainerRefs] = useState({})
   const previousLastContainer = usePrevious(lastContainer)
   useEffect(() => {
     if (isDragging && dragItems && previousLastContainer != lastContainer) {
@@ -107,7 +133,6 @@ const DragProvider = ({ children, dragIds, setDragIds }) => {
 
   const dragEndHandler = useCallback(() => {
     setIsDragging(false)
-    console.log('MOUSEUP', lastContainer)
     setDragItems((oldItems) => {
       let copyItems = { ...oldItems }
       copyItems[lastContainer] = copyItems[lastContainer].map(({ id }) => ({
@@ -141,27 +166,40 @@ const DragProvider = ({ children, dragIds, setDragIds }) => {
   )
 
   const dragContext = {
-    setContainerRef: (id, ref) => {},
-    mouseOverContainer: mouseOverContainerCallback,
+    setContainerRef: (id, ref) => {
+      console.log('setcontainersref', id, ref, containerRefs)
+      setContainerRefs((containers) => {
+        const copyContainers = { ...containers }
+        copyContainers[id] = ref
+        console.log('wtf mate', copyContainers)
+        return copyContainers
+      })
+    },
     items: dragItems,
-    dragStart: (containerId, itemId, e, children) => {
+    dragStart: (containerId, itemId, e, children, ref) => {
       setIsDragging(true)
       setStartPosition({ x: e.clientX, y: e.clientY })
       setDraggedItemId(itemId)
       setDragChildren(children)
+      const rect = ref.current.getBoundingClientRect()
+      console.log('MESAURE', rect, e.clientX, e.clientY, e.screenX, e.screenY)
+      setMirrorOffset({ x: e.clientX - rect.x, y: e.clientY - rect.y })
     },
     dragStop: (containerId, itemId) => {
       setIsDragging(false)
     }
   }
 
-  console.log('rerender :/', dragItems)
+  console.log('rerender :/', dragItems, containerRefs)
   return (
     <DragContext.Provider value={dragContext}>
       {isDragging && (
         <DragContainer
           startPosition={startPosition}
           dragChildren={dragChildren}
+          offset={mirrorOffset}
+          containerRefs={containerRefs}
+          mouseOverContainer={mouseOverContainerCallback}
         ></DragContainer>
       )}
       <div style={{ userSelect: 'none' }}>{children}</div>
@@ -173,11 +211,8 @@ function useDragContainer(id) {
   const dragContext = useContext(DragContext)
   const containerRef = useRef()
   useEffect(() => {
-    containerRef.current.addEventListener('mouseenter', () => {
-      dragContext.mouseOverContainer(id)
-    })
+    dragContext.setContainerRef(id, containerRef)
   }, [containerRef])
-  dragContext.setContainerRef(id, containerRef)
   let dragItems = dragContext.items?.[id] ?? []
 
   return [dragItems, containerRef]
